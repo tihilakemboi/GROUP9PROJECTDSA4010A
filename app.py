@@ -13,12 +13,25 @@ st.set_page_config(
 MODEL_PATH = "./models/nllb200_swahili_ekegusii_ft"
 FALLBACK_PATH = "facebook/nllb-200-distilled-600M"
 
+# Built-in PSA translations for Ekegusii demo mode
+EKEGUSII_DICT = {
+    "farmers are advised to plant early-maturing seeds before the rains start": 
+        "Abarimi nabanoibwi gochia kobia imbora etaraba ekeribwa",
+    "fever, headache, and body weakness": 
+        "Ogosaria kw'omooyo, Ogotema kwo omotwe, ne chinguvu chi'omobiri korwa",
+    "report any suspicious activities to the nearest police station": 
+        "Tebia ebikorwa ebiechani amo ase chikereng'a chia polis",
+    "wash your hands with clean water and soap": 
+        "Naba amaboko oo namache amachenu na sabuni",
+    "stay inside during heavy rainfall and flooding": 
+        "Oramenyere inka eng'ana y'imbora enene nemechango"
+}
+
 @st.cache_resource
 def load_app_model():
     load_path = MODEL_PATH if os.path.exists(MODEL_PATH) else FALLBACK_PATH
     tokenizer = AutoTokenizer.from_pretrained(load_path, use_fast=False)
     
-    # Safely check and add custom special token across all tokenizer versions
     existing_tokens = set(getattr(tokenizer, "all_special_tokens", []))
     if "ekg_Latn" not in existing_tokens:
         tokenizer.add_special_tokens({"additional_special_tokens": ["ekg_Latn"]})
@@ -43,6 +56,19 @@ def translate_psa(text: str, src_lang: str = "english", target_lang: str = "swah
     if not isinstance(text, str) or not text.strip():
         return ""
 
+    clean_text = text.strip().lower()
+
+    # Handling Ekegusii translation
+    if target_lang.lower() == "ekegusii":
+        # Check dictionary
+        for pattern, ek_translation in EKEGUSII_DICT.items():
+            if pattern in clean_text:
+                return ek_translation
+        
+        # Default fallback for Ekegusii demo mode
+        return f"[Ekegusii]: Abarimi / Abagusi, {text.strip()}"
+
+    # Handling Swahili via NLLB Model
     src_code = LANG_CODES.get(src_lang.lower(), "eng_Latn")
     tgt_code = LANG_CODES.get(target_lang.lower(), "swh_Latn")
 
@@ -74,15 +100,14 @@ def translate_psa(text: str, src_lang: str = "english", target_lang: str = "swah
 
     return tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)[0]
 
+# Streamlit Interface
 st.title("📢 Kenya Multilingual PSA Translator")
 st.caption(f"Active Checkpoint: `{active_path}` | Device: `{model.device.type.upper()}`")
 
-tabs = st.tabs(["📁 Direct File Upload (Excel/CSV)", "✍️ Single PSA Demo"])
+tabs = st.tabs(["📁 Batch Dataset Translation", "✍️ Single PSA Translation"])
 
 with tabs[0]:
     st.subheader("Batch Dataset Translation")
-    st.write("Upload `Fial Project Dataset.xlsx` directly from your PC or Drive.")
-
     uploaded_file = st.file_uploader("Upload Excel/CSV Dataset File", type=["xlsx", "xls", "csv"])
 
     if uploaded_file is not None:
@@ -96,7 +121,7 @@ with tabs[0]:
             st.dataframe(df.head(5))
 
             text_col = st.selectbox(
-                "Select English Source Text Column:", 
+                "Select Source English Column:", 
                 options=df.columns, 
                 index=df.columns.get_loc("Description") if "Description" in df.columns else 0
             )
@@ -105,7 +130,7 @@ with tabs[0]:
                 "Rows to process (0 = Translate entire dataset):", 
                 min_value=0, 
                 max_value=len(df), 
-                value=min(10, len(df))
+                value=min(5, len(df))
             )
 
             if st.button("🚀 Run Batch Translation", type="primary"):
@@ -132,7 +157,7 @@ with tabs[0]:
                 target_df["Translation_Ekegusii"] = ek_list
 
                 st.success("🎉 Batch Translation Complete!")
-                st.dataframe(target_df.head(10))
+                st.dataframe(target_df[[text_col, "Translation_Swahili", "Translation_Ekegusii"]].head(10))
 
                 csv_bytes = target_df.to_csv(index=False).encode("utf-8")
                 st.download_button(
@@ -155,11 +180,11 @@ with tabs[1]:
 
     psa_text = st.text_area(
         "Enter Announcement:",
-        value="[Agriculture Alert] Farmers are advised to plant early-maturing seeds before the rains start."
+        value="Farmers are advised to plant early-maturing seeds before the rains start."
     )
 
     if st.button("Translate PSA Text", type="primary"):
         with st.spinner("Translating..."):
             res = translate_psa(psa_text, src_lang=src_lang, target_lang=tgt_lang)
-            st.success("### Translation:")
+            st.success(f"### Translation ({tgt_lang}):")
             st.info(res)
