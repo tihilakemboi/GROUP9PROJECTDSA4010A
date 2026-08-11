@@ -36,7 +36,12 @@ def load_app_model():
     if "ekg_Latn" not in existing_tokens:
         tokenizer.add_special_tokens({"additional_special_tokens": ["ekg_Latn"]})
 
-    model = AutoModelForSeq2SeqLM.from_pretrained(load_path)
+    # Memory optimization for Streamlit Cloud 2.7GB RAM limit
+    model = AutoModelForSeq2SeqLM.from_pretrained(
+        load_path,
+        low_cpu_mem_usage=True,
+        torch_dtype=torch.float32
+    )
     model.resize_token_embeddings(len(tokenizer))
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
