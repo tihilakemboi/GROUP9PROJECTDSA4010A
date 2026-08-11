@@ -18,7 +18,9 @@ def load_app_model():
     load_path = MODEL_PATH if os.path.exists(MODEL_PATH) else FALLBACK_PATH
     tokenizer = AutoTokenizer.from_pretrained(load_path, use_fast=False)
     
-    if "ekg_Latn" not in tokenizer.additional_special_tokens:
+    # Safely check and add custom special token across all tokenizer versions
+    existing_tokens = set(getattr(tokenizer, "all_special_tokens", []))
+    if "ekg_Latn" not in existing_tokens:
         tokenizer.add_special_tokens({"additional_special_tokens": ["ekg_Latn"]})
 
     model = AutoModelForSeq2SeqLM.from_pretrained(load_path)
