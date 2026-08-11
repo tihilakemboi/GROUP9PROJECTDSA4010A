@@ -2,16 +2,13 @@ import os
 import torch
 import pandas as pd
 import streamlit as st
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 st.set_page_config(
     page_title="Kenya Multilingual PSA Translator",
     page_icon="📢",
     layout="wide"
 )
-
-MODEL_PATH = "./models/nllb200_swahili_ekegusii_ft"
-FALLBACK_PATH = "facebook/nllb-200-distilled-600M"
 
 # Built-in PSA translations for Ekegusii demo mode
 EKEGUSII_DICT = {
@@ -27,29 +24,18 @@ EKEGUSII_DICT = {
         "Oramenyere inka eng'ana y'imbora enene nemechango"
 }
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading NLLB Translation Model...")
 def load_app_model():
-    load_path = MODEL_PATH if os.path.exists(MODEL_PATH) else FALLBACK_PATH
-    tokenizer = AutoTokenizer.from_pretrained(load_path, use_fast=False)
-    
-    existing_tokens = set(getattr(tokenizer, "all_special_tokens", []))
-    if "ekg_Latn" not in existing_tokens:
-        tokenizer.add_special_tokens({"additional_special_tokens": ["ekg_Latn"]})
-
-    # Memory optimization for Streamlit Cloud 2.7GB RAM limit
+    model_name = "facebook/nllb-200-distilled-600M"
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
     model = AutoModelForSeq2SeqLM.from_pretrained(
-        load_path,
+        model_name, 
         low_cpu_mem_usage=True,
-        torch_dtype=torch.float32
+        dtype=torch.float32
     )
-    model.resize_token_embeddings(len(tokenizer))
-    
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = model.to(device)
-    
-    return tokenizer, model, load_path
+    return tokenizer, model
 
-tokenizer, model, active_path = load_app_model()
+tokenizer, model = load_app_model()
 
 LANG_CODES = {
     "english": "eng_Latn",
@@ -63,51 +49,36 @@ def translate_psa(text: str, src_lang: str = "english", target_lang: str = "swah
 
     clean_text = text.strip().lower()
 
-    # Handling Ekegusii translation
+    # Rule-Based fallback for Ekegusii (Low resource fine-tune)
     if target_lang.lower() == "ekegusii":
-        # Check dictionary
         for pattern, ek_translation in EKEGUSII_DICT.items():
             if pattern in clean_text:
                 return ek_translation
-        
-        # Default fallback for Ekegusii demo mode
         return f"[Ekegusii]: Abarimi / Abagusi, {text.strip()}"
 
-    # Handling Swahili via NLLB Model
+    # Swahili translation via NLLB Base Model
     src_code = LANG_CODES.get(src_lang.lower(), "eng_Latn")
     tgt_code = LANG_CODES.get(target_lang.lower(), "swh_Latn")
 
     tokenizer.src_lang = src_code
+    target_id = tokenizer.convert_tokens_to_ids(tgt_code)
 
-    if hasattr(tokenizer, "lang_code_to_id") and tgt_code in tokenizer.lang_code_to_id:
-        target_id = tokenizer.lang_code_to_id[tgt_code]
-    else:
-        target_id = tokenizer.convert_tokens_to_ids(tgt_code)
-        if target_id is None or target_id == tokenizer.unk_token_id:
-            target_id = tokenizer.convert_tokens_to_ids(f"__{tgt_code}__")
-
-    inputs = tokenizer(
-        text, 
-        return_tensors="pt", 
-        padding=True, 
-        truncation=True, 
-        max_length=128
-    ).to(model.device)
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=128)
 
     with torch.no_grad():
         translated_tokens = model.generate(
             **inputs,
             forced_bos_token_id=target_id,
             max_length=128,
-            num_beams=4,
+            num_beams=2,
             early_stopping=True
         )
 
     return tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)[0]
 
-# Streamlit Interface
+# UI Layout
 st.title("📢 Kenya Multilingual PSA Translator")
-st.caption(f"Active Checkpoint: `{active_path}` | Device: `{model.device.type.upper()}`")
+st.caption("Deployed Streamlit Demo | English ↔ Swahili ↔ Ekegusii")
 
 tabs = st.tabs(["📁 Batch Dataset Translation", "✍️ Single PSA Translation"])
 
